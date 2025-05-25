@@ -1,24 +1,94 @@
-# Compiled class file
-*.class
+import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.text.PDFTextStripper;
+import net.sourceforge.tess4j.Tesseract;
+import net.sourceforge.tess4j.TesseractException;
+import org.apache.poi.xwpf.usermodel.XWPFDocument;
+import org.apache.poi.xwpf.usermodel.XWPFParagraph;
 
-# Log file
-*.log
+import javax.imageio.ImageIO;
+import java.awt.image.BufferedImage;
+import java.io.*;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
-# BlueJ files
-*.ctxt
+public class ExameReconhecedor {
 
-# Mobile Tools for Java (J2ME)
-.mtj.tmp/
+    public static void main(String[] args) {
+        String caminhoArquivo = "exames.pdf";
 
-# Package Files #
-*.jar
-*.war
-*.nar
-*.ear
-*.zip
-*.tar.gz
-*.rar
+        try {
+            String textoExtraido = extrairTextoDoPDF(caminhoArquivo);
+            if (textoExtraido.isBlank()) {
+                textoExtraido = realizarOCR(caminhoArquivo);
+            }
 
-# virtual machine crash logs, see http://www.java.com/en/download/help/error_hotspot.xml
-hs_err_pid*
-replay_pid*
+            String hemoglobina = extrairValor(textoExtraido, "Hemoglobina", "g/dL");
+            String glicose = extrairValor(textoExtraido, "Glicose", "mg/dL");
+            String creatinina = extrairValor(textoExtraido, "Creatinina", "mg/dL");
+
+            String evolucao = gerarEvolucao(hemoglobina, glicose, creatinina);
+            salvarComoDocx(evolucao, "evolucao_medica.docx");
+            System.out.println("Evolução gerada com sucesso.");
+
+        } catch (Exception e) {
+            System.err.println("Erro: " + e.getMessage());
+        }
+    }
+
+    private static String extrairTextoDoPDF(String caminho) throws IOException {
+        try (PDDocument document = PDDocument.load(new File(caminho))) {
+            PDFTextStripper stripper = new PDFTextStripper();
+            return stripper.getText(document);
+        }
+    }
+
+    private static String realizarOCR(String caminhoPDF) throws IOException, TesseractException {
+        PDDocument document = PDDocument.load(new File(caminhoPDF));
+        BufferedImage image = new PDFRenderer(document).renderImageWithDPI(0, 300);
+        File imagemTemporaria = new File("temp_image.png");
+        ImageIO.write(image, "png", imagemTemporaria);
+
+        Tesseract tesseract = new Tesseract();
+        tesseract.setDatapath("tessdata"); // Defina o caminho da pasta tessdata
+        String resultado = tesseract.doOCR(imagemTemporaria);
+
+        imagemTemporaria.delete();
+        document.close();
+        return resultado;
+    }
+
+    private static String extrairValor(String texto, String nomeExame, String unidade) {
+        String regex = nomeExame + ".*?(\
+?\n?.*?)(\d+[.,]?\d*)\s*" + unidade;
+        Matcher matcher = Pattern.compile(regex, Pattern.CASE_INSENSITIVE).matcher(texto);
+        if (matcher.find()) {
+            return matcher.group(2);
+        } else {
+            return "Não encontrado";
+        }
+    }
+
+    private static String gerarEvolucao(String hgb, String glic, String crea) {
+        return String.format("""
+                Evolução médica:
+                Paciente apresenta os seguintes resultados laboratoriais:
+                - Hemoglobina: %s g/dL
+                - Glicose: %s mg/dL
+                - Creatinina: %s mg/dL
+
+                Análise clínica e conduta serão tomadas conforme histórico e quadro atual.
+                """, hgb, glic, crea);
+    }
+
+    private static void salvarComoDocx(String texto, String caminhoSaida) throws IOException {
+        try (XWPFDocument document = new XWPFDocument();
+             FileOutputStream out = new FileOutputStream(caminhoSaida)) {
+
+            XWPFParagraph paragraph = document.createParagraph();
+            paragraph.createRun().setText(texto);
+            document.write(out);
+        }
+    }
+}
+
+
